@@ -1,0 +1,85 @@
+# ===================== 通用Python项目忽略规则 =====================
+# 字节码文件
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+env/
+env3/
+.venv/
+.env/
+
+# 缓存/日志/临时文件
+*.swp
+*.swo
+*.log
+*.tmp
+*.temp
+.DS_Store
+.idea/
+.vscode/
+*.ipynb_checkpoints/
+
+# ===================== 医疗GPT项目专属忽略规则 =====================
+# 含敏感API Key的文件（重点！）
+data/finetune/sharegpt_zh_1K_format.jsonl
+
+# 数据集/语料库（可选，若文件过大或含敏感数据）
+# data/pretrain/
+# data/rag/
+# data/reward/
+
+# 模型文件（通常很大，不建议推送到GitHub）
+*.bin
+*.pt
+*.pth
+*.ckpt
+model/
+models/
+checkpoint/
+checkpoints/
+
+# 脚本执行日志/输出
+*.out
+*.err
+*.log
+run_*.sh.log
+
+# 量化/训练生成的临时文件
+*.quant
+*.adapter
+merge_*.py.log
+
+# Jupyter Notebook缓存
+.ipynb_checkpoints/
+
+# ===================== 敏感配置文件 =====================
+# 若有配置文件含密钥，也加入忽略
+*.yml
+*.yaml
+*.json
+!zero1.json
+!zero2.json
+!zero3.json
+!_config.yml
