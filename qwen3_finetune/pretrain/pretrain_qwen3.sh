@@ -6,9 +6,7 @@
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 ../pretraining.py \
     --model_name_or_path ../models/qwen3-8b-dir \
     --train_file_dir ../data/rag \
-    --train_file_name medical_corpus.txt \
     --validation_file_dir ../data/rag \
-    --validation_file_name medical_corpus.txt \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
     --do_train \
@@ -34,7 +32,6 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 ../pretraining.py \
     --overwrite_output_dir \
     --ddp_timeout 30000 \
     --logging_first_step True \
-    --target_modules all \
     --lora_rank 16 \
     --lora_alpha 32 \
     --lora_dropout 0.05 \
@@ -44,5 +41,4 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 ../pretraining.py \
     --report_to tensorboard \
     --ddp_find_unused_parameters False \
     --gradient_checkpointing True \
-    --cache_dir ./cache \
-    --flash_attn True
+    --cache_dir ./cache

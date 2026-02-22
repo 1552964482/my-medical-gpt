@@ -86,3 +86,28 @@ merge_*.py.log
 data/finetune/downloaded/*.jsonl
 data/finetune/downloaded/*.jsonl
 data/finetune/downloaded/*.txt
+
+# ===================== 训练输出/缓存（新增） =====================
+# 训练缓存
+cache/
+**/cache/
+qwen3_finetune/cache/
+
+# 模型输出目录
+outputs-*/
+**/outputs-*/
+qwen3_finetune/outputs-*/
+qwen3_finetune/outputs-qwen3-sft-huatuo/
+qwen3_finetune/outputs-qwen3-pretrain/
+
+# 数据集文件（处理后的）
+data/finetune/huatuo_sft/
+**/huatuo_sft/
+
+# 大数据文件（JSONL格式，超过100MB）
+data/finetune/huatuo_sft_conversations.jsonl
+**/*_conversations.jsonl
+
+# 评估结果
+comparison_results/
+**/comparison_results/

@@ -1,195 +1,288 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-模型对比脚本
-对比微调后的Qwen3模型和Ziya-13B-med模型在医疗问答任务上的表现
-"""
-
-import json
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
-from tqdm import tqdm
+import json
+import time
+from typing import Dict, List, Tuple
+import os
 
 
-def load_model(model_path, lora_path=None, device="cuda"):
-    """
-    加载模型
-    
-    Args:
-        model_path: 基础模型路径
-        lora_path: LoRA权重路径（可选）
-        device: 设备
-    
-    Returns:
-        model, tokenizer
-    """
-    print(f"加载模型: {model_path}")
-    if lora_path:
-        print(f"加载LoRA权重: {lora_path}")
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    
-    if device == "cuda" and not torch.cuda.is_available():
-        print("CUDA不可用，使用CPU")
-        device = "cpu"
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-        device_map=device,
-        trust_remote_code=True,
-        low_cpu_mem_usage=True
-    )
-    
-    if lora_path:
-        model = PeftModel.from_pretrained(model, lora_path, device_map=device)
-    
-    model.eval()
-    return model, tokenizer
-
-
-def generate_answer(model, tokenizer, question, max_new_tokens=512, temperature=0.7):
-    """
-    生成答案
-    
-    Args:
-        model: 模型
-        tokenizer: 分词器
-        question: 问题
-        max_new_tokens: 最大生成长度
-        temperature: 温度参数
-    
-    Returns:
-        生成的答案
-    """
-    messages = [{"role": "user", "content": question}]
-    
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-    
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            do_sample=True if temperature > 0 else False,
-            pad_token_id=tokenizer.eos_token_id
+class ModelEvaluator:
+    def __init__(self, model_path: str, model_name: str, use_lora: bool = False):
+        self.model_path = model_path
+        self.model_name = model_name
+        self.use_lora = use_lora
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        print(f"\n{'='*60}")
+        print(f"加载模型: {model_name}")
+        print(f"{'='*60}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True
         )
-    
-    response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-    return response
-
-
-def compare_models(qwen3_model_path, qwen3_lora_path, ziya_model_path, test_questions):
-    """
-    对比两个模型
-    
-    Args:
-        qwen3_model_path: Qwen3模型路径
-        qwen3_lora_path: Qwen3 LoRA权重路径
-        ziya_model_path: Ziya模型路径
-        test_questions: 测试问题列表
-    """
-    print("=" * 80)
-    print("开始加载模型...")
-    print("=" * 80)
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # 加载Qwen3模型
-    qwen3_model, qwen3_tokenizer = load_model(qwen3_model_path, qwen3_lora_path, device)
-    
-    # 加载Ziya模型
-    ziya_model, ziya_tokenizer = load_model(ziya_model_path, None, device)
-    
-    print("=" * 80)
-    print("模型加载完成，开始对比测试...")
-    print("=" * 80)
-    
-    results = []
-    
-    for idx, question in enumerate(tqdm(test_questions, desc="测试进度")):
-        print(f"\n{'='*80}")
-        print(f"测试问题 {idx + 1}/{len(test_questions)}")
-        print(f"{'='*80}")
-        print(f"问题: {question}")
-        print(f"{'-'*80}")
         
-        # Qwen3生成
-        print("\nQwen3-8B 回答:")
-        qwen3_answer = generate_answer(qwen3_model, qwen3_tokenizer, question)
-        print(qwen3_answer)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        print(f"\n{'-'*80}")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
         
-        # Ziya生成
-        print("\nZiya-13B-med 回答:")
-        ziya_answer = generate_answer(ziya_model, ziya_tokenizer, question)
-        print(ziya_answer)
+        if use_lora:
+            print("加载LoRA适配器...")
+            model = PeftModel.from_pretrained(model, model_path)
         
-        results.append({
-            "question": question,
-            "qwen3_answer": qwen3_answer,
-            "ziya_answer": ziya_answer
-        })
-        
-        print(f"\n{'='*80}")
+        self.model = model.eval()
+        print(f"✅ 模型加载完成！")
+        param_count = sum(p.numel() for p in model.parameters())
+        print(f"   参数量: {param_count / 1e9:.2f}B")
+        print(f"   设备: {self.device}")
     
-    return results
+    def generate_response(
+        self, 
+        question: str, 
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9
+    ) -> Tuple[str, float]:
+        prompt = f"<|im_start|>system\n你是一个专业的医疗助手，请根据患者的问题提供准确、专业的医疗建议。<|im_end|>\n\n<|im_start|>user\n{question}<|im_end|>\n\n<|im_start|>assistant\n"
+        
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        
+        start_time = time.time()
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+        end_time = time.time()
+        
+        response = self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        generation_time = end_time - start_time
+        
+        return response, generation_time
+    
+    def evaluate_questions(self, questions: List[Dict]) -> List[Dict]:
+        results = []
+        
+        for i, item in enumerate(questions, 1):
+            print(f"\n[{i}/{len(questions)}] 问题: {item['question'][:50]}...")
+            
+            response, gen_time = self.generate_response(item['question'])
+            
+            results.append({
+                'question': item['question'],
+                'answer': response,
+                'generation_time': gen_time,
+                'tokens': len(self.tokenizer.encode(response))
+            })
+            
+            print(f"   回答长度: {len(response)} 字符")
+            print(f"   生成时间: {gen_time:.2f}秒")
+        
+        return results
 
 
-def save_results(results, output_path):
-    """
-    保存对比结果
-    
-    Args:
-        results: 对比结果
-        output_path: 输出路径
-    """
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    
-    print(f"\n对比结果已保存到: {output_path}")
-
-
-def main():
-    """
-    主函数
-    """
-    # 配置路径
-    qwen3_model_path = "../models/qwen3-8b-dir"
-    qwen3_lora_path = "./outputs-qwen3-medical/checkpoint-500"  # 微调后的checkpoint路径
-    ziya_model_path = "../models/ziya-13b-med"
-    
-    # 测试问题
-    test_questions = [
-        "治疗阳痿吃什么药呢？",
-        "精子生成减少的病因是什么？",
-        "脑水瘤现在可以治好吗？",
-        "暴盲的病因病机是什么?",
-        "糖尿病的常见并发症有哪些？",
-        "高血压患者日常生活中需要注意什么？",
-        "感冒了应该吃什么药？",
-        "如何预防心血管疾病？"
+def evaluate_all_models():
+    medical_questions = [
+        {
+            'question': '糖尿病的主要症状有哪些？应该如何预防和治疗？',
+            'category': '慢性病'
+        },
+        {
+            'question': '高血压患者日常生活中需要注意哪些事项？',
+            'category': '慢性病'
+        },
+        {
+            'question': '感冒和流感有什么区别？如何判断自己得了哪种？',
+            'category': '常见病'
+        },
+        {
+            'question': '妊娠期心脏病患者需要注意什么？',
+            'category': '产科'
+        },
+        {
+            'question': '婴幼儿发烧到39度应该如何处理？',
+            'category': '儿科'
+        },
+        {
+            'question': '抑郁症的主要表现有哪些？应该如何帮助患者？',
+            'category': '精神科'
+        },
+        {
+            'question': '阑尾炎的早期症状是什么？需要手术吗？',
+            'category': '外科'
+        },
+        {
+            'question': '长期失眠会导致哪些健康问题？如何改善睡眠质量？',
+            'category': '神经科'
+        },
+        {
+            'question': '肝功能异常可能由哪些原因引起？',
+            'category': '内科'
+        },
+        {
+            'question': '新冠康复后出现乏力、心慌等症状正常吗？',
+            'category': '传染病'
+        }
     ]
     
-    # 运行对比
-    results = compare_models(
-        qwen3_model_path=qwen3_model_path,
-        qwen3_lora_path=qwen3_lora_path,
-        ziya_model_path=ziya_model_path,
-        test_questions=test_questions
-    )
+    models_config = [
+        {
+            'name': '微调后Qwen3-8B',
+            'path': '/root/autodl-tmp/my-medical-gpt/qwen3_finetune/outputs-qwen3-sft-huatuo',
+            'use_lora': True
+        },
+        {
+            'name': '微调前Qwen3-8B',
+            'path': '/root/autodl-tmp/my-medical-gpt/models/qwen3-8b-dir',
+            'use_lora': False
+        },
+        {
+            'name': 'Ziya-13B-Med',
+            'path': '/root/autodl-tmp/my-medical-gpt/models/ziya-13b-med',
+            'use_lora': False
+        }
+    ]
     
-    # 保存结果
-    save_results(results, "./comparison_results.json")
+    all_results = {}
+    
+    for config in models_config:
+        evaluator = ModelEvaluator(
+            config['path'],
+            config['name'],
+            config['use_lora']
+        )
+        
+        results = evaluator.evaluate_questions(medical_questions)
+        all_results[config['name']] = results
+        
+        del evaluator.model
+        del evaluator
+        torch.cuda.empty_cache()
+    
+    return all_results, medical_questions
+
+
+def generate_comparison_report(all_results: Dict, questions: List[Dict]):
+    output_dir = '/root/autodl-tmp/my-medical-gpt/qwen3_finetune/eval/comparison_results'
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"\n{'='*60}")
+    print("生成对比报告...")
+    print(f"{'='*60}")
+    
+    full_report = []
+    
+    for i, question_item in enumerate(questions, 1):
+        report_item = {
+            'id': i,
+            'category': question_item['category'],
+            'question': question_item['question'],
+            'models': {}
+        }
+        
+        print(f"\n{'='*60}")
+        print(f"问题 {i}: {question_item['category']}")
+        print(f"{question_item['question']}")
+        print(f"{'='*60}")
+        
+        for model_name, results in all_results.items():
+            result = results[i-1]
+            report_item['models'][model_name] = {
+                'answer': result['answer'],
+                'generation_time': result['generation_time'],
+                'tokens': result['tokens']
+            }
+            
+            print(f"\n【{model_name}】")
+            print(f"生成时间: {result['generation_time']:.2f}秒 | Token数: {result['tokens']}")
+            print(f"回答:\n{result['answer']}")
+        
+        full_report.append(report_item)
+    
+    with open(f'{output_dir}/comparison_report.json', 'w', encoding='utf-8') as f:
+        json.dump(full_report, f, ensure_ascii=False, indent=2)
+    
+    with open(f'{output_dir}/comparison_report.txt', 'w', encoding='utf-8') as f:
+        f.write("="*80 + "\n")
+        f.write("医疗模型对比评估报告\n")
+        f.write("="*80 + "\n\n")
+        
+        for item in full_report:
+            f.write(f"问题 {item['id']}: {item['category']}\n")
+            f.write(f"{item['question']}\n")
+            f.write("-"*80 + "\n\n")
+            
+            for model_name, model_data in item['models'].items():
+                f.write(f"【{model_name}】\n")
+                f.write(f"生成时间: {model_data['generation_time']:.2f}秒 | Token数: {model_data['tokens']}\n")
+                f.write(f"回答:\n{model_data['answer']}\n")
+                f.write("\n")
+            
+            f.write("="*80 + "\n\n")
+    
+    print(f"\n✅ 对比报告已保存到: {output_dir}")
+    print(f"   - comparison_report.json")
+    print(f"   - comparison_report.txt")
+
+
+def generate_summary_stats(all_results: Dict, questions: List[Dict]):
+    output_dir = '/root/autodl-tmp/my-medical-gpt/qwen3_finetune/eval/comparison_results'
+    
+    summary = {}
+    
+    for model_name, results in all_results.items():
+        total_time = sum(r['generation_time'] for r in results)
+        total_tokens = sum(r['tokens'] for r in results)
+        avg_time = total_time / len(results)
+        avg_tokens = total_tokens / len(results)
+        avg_speed = total_tokens / total_time
+        
+        summary[model_name] = {
+            'total_time': total_time,
+            'avg_time_per_question': avg_time,
+            'total_tokens': total_tokens,
+            'avg_tokens_per_answer': avg_tokens,
+            'avg_tokens_per_second': avg_speed
+        }
+    
+    print(f"\n{'='*60}")
+    print("性能统计摘要")
+    print(f"{'='*60}")
+    print(f"\n{'模型':<20} {'平均时间(秒)':<15} {'平均Token数':<15} {'速度(Token/s)':<15}")
+    print("-"*60)
+    
+    for model_name, stats in summary.items():
+        line = f"{model_name:<20} {stats['avg_time_per_question']:<15.2f} "
+        line += f"{stats['avg_tokens_per_answer']:<15.1f} {stats['avg_tokens_per_second']:<15.1f}"
+        print(line)
+    
+    with open(f'{output_dir}/summary_stats.json', 'w', encoding='utf-8') as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    
+    print(f"\n✅ 统计摘要已保存到: {output_dir}/summary_stats.json")
 
 
 if __name__ == "__main__":
-    main()
+    print("\n" + "="*60)
+    print("医疗模型对比评估")
+    print("="*60)
+    
+    all_results, questions = evaluate_all_models()
+    generate_comparison_report(all_results, questions)
+    generate_summary_stats(all_results, questions)
+    
+    print("\n" + "="*60)
+    print("✅ 对比评估完成！")
+    print("="*60)

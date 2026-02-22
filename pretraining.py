@@ -36,7 +36,6 @@ from transformers import (
     HfArgumentParser,
     Trainer,
     Seq2SeqTrainingArguments,
-    is_torch_tpu_available,
     set_seed,
     BitsAndBytesConfig,
 )
@@ -729,9 +728,9 @@ def main():
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=fault_tolerance_data_collator,
-        compute_metrics=compute_metrics if training_args.do_eval and not is_torch_tpu_available() else None,
+        compute_metrics=compute_metrics if training_args.do_eval else None,
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
-        if training_args.do_eval and not is_torch_tpu_available()
+        if training_args.do_eval
         else None,
     )
 
