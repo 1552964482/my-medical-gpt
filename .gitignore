@@ -83,3 +83,6 @@ merge_*.py.log
 !zero2.json
 !zero3.json
 !_config.yml
+data/finetune/downloaded/*.jsonl
+data/finetune/downloaded/*.jsonl
+data/finetune/downloaded/*.txt
