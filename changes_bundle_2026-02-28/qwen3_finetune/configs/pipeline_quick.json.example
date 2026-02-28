@@ -1,0 +1,41 @@
+{
+  "name": "qwen3-quick-pipeline",
+  "workdir": "${qwen3_root}",
+  "logs_dir": "${qwen3_root}/logs/pipeline",
+  "fail_fast": true,
+  "vars": {
+    "qwen3_base_model": "${project_root}/models/qwen3-8b-dir",
+    "pretrain_output_dir": "${qwen3_root}/outputs-qwen3-pretrain",
+    "sft_output_dir": "${qwen3_root}/outputs-qwen3-medical",
+    "qwen3_lora_path": "${sft_output_dir}/checkpoint-final",
+    "compare_output_dir": "${qwen3_root}/eval/comparison_results"
+  },
+  "stages": [
+    {
+      "name": "pretrain",
+      "env": {
+        "MODEL_PATH": "${qwen3_base_model}",
+        "OUTPUT_DIR": "${pretrain_output_dir}"
+      },
+      "commands": [
+        "bash pretrain/pretrain_qwen3_single_gpu.sh"
+      ]
+    },
+    {
+      "name": "sft",
+      "env": {
+        "MODEL_PATH": "${qwen3_base_model}",
+        "OUTPUT_DIR": "${sft_output_dir}"
+      },
+      "commands": [
+        "bash sft/finetune_qwen3_single_gpu.sh"
+      ]
+    },
+    {
+      "name": "compare_eval",
+      "commands": [
+        "python3 eval/compare_models.py --qwen3-base-model ${qwen3_base_model} --qwen3-lora-path ${qwen3_lora_path} --output-dir ${compare_output_dir}"
+      ]
+    }
+  ]
+}
