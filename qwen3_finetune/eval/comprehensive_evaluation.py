@@ -5,19 +5,20 @@
 提供多维度、量化的医疗模型评测
 """
 
+import argparse
 import json
 import re
 import time
+from pathlib import Path
+
 import torch
 import numpy as np
-from collections import defaultdict
-from typing import List, Dict, Any
+from typing import List, Dict, Tuple
 from dataclasses import dataclass, asdict
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 
 @dataclass
@@ -262,6 +263,8 @@ class ModelComparator:
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         
         dtype = torch.bfloat16 if self.device == "cuda" else torch.float16
+        if self.device != "cuda":
+            dtype = torch.float32
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=dtype,
@@ -284,7 +287,8 @@ class ModelComparator:
     def generate_answer(self, model_name: str, question: str, 
                      max_new_tokens: int = 512, 
                      temperature: float = 0.7,
-                     num_samples: int = 1) -> List[str]:
+                     top_p: float = 0.9,
+                     num_samples: int = 1) -> Tuple[List[str], float, float]:
         """生成答案（支持多次采样）"""
         model = self.models[model_name]
         tokenizer = self.tokenizers[model_name]
@@ -294,30 +298,44 @@ class ModelComparator:
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         
         answers = []
+        total_generation_time = 0.0
+        peak_memory_used = 0.0
         for _ in range(num_samples):
             start_time = time.time()
-            torch.cuda.reset_peak_memory_stats()
+            if self.device == "cuda" and torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
             
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
+                    top_p=top_p,
                     do_sample=True if temperature > 0 else False,
                     pad_token_id=tokenizer.eos_token_id,
                     num_return_sequences=1
                 )
             
             generation_time = time.time() - start_time
-            memory_used = torch.cuda.max_memory_allocated() / (1024 ** 3) if self.device == "cuda" else 0
+            memory_used = (
+                torch.cuda.max_memory_allocated() / (1024 ** 3)
+                if self.device == "cuda" and torch.cuda.is_available()
+                else 0
+            )
+            total_generation_time += generation_time
+            peak_memory_used = max(peak_memory_used, memory_used)
             
             answer = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
             answers.append(answer)
         
-        return answers, generation_time, memory_used
+        avg_generation_time = total_generation_time / max(num_samples, 1)
+        return answers, avg_generation_time, peak_memory_used
     
     def evaluate_model(self, model_name: str, test_questions: List[str], 
-                    num_samples: int = 3) -> List[EvaluationResult]:
+                    num_samples: int = 3,
+                    max_new_tokens: int = 512,
+                    temperature: float = 0.7,
+                    top_p: float = 0.9) -> List[EvaluationResult]:
         """评测单个模型"""
         print(f"\n{'='*80}")
         print(f"评测模型: {model_name}")
@@ -327,12 +345,17 @@ class ModelComparator:
         
         for question in tqdm(test_questions, desc=f"评测 {model_name}"):
             # 生成多个样本
-            answers, gen_time, memory = self.generate_answer(
-                model_name, question, num_samples=num_samples
+            answers, avg_gen_time, memory = self.generate_answer(
+                model_name,
+                question,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                num_samples=num_samples,
             )
             
             # 对每个样本进行评估
-            for idx, answer in enumerate(answers):
+            for answer in answers:
                 scores = self.evaluator.evaluate(question, answer)
                 overall = np.mean(list(scores.values()))
                 
@@ -341,7 +364,7 @@ class ModelComparator:
                     question=question,
                     answer=answer,
                     answer_length=len(answer),
-                    generation_time=gen_time / num_samples,
+                    generation_time=avg_gen_time,
                     memory_used=memory,
                     accuracy_score=scores['accuracy'],
                     completeness_score=scores['completeness'],
@@ -355,13 +378,21 @@ class ModelComparator:
         return results
     
     def compare_models(self, model_names: List[str], test_questions: List[str],
-                     num_samples: int = 3) -> Dict[str, List[EvaluationResult]]:
+                     num_samples: int = 3,
+                     max_new_tokens: int = 512,
+                     temperature: float = 0.7,
+                     top_p: float = 0.9) -> Dict[str, List[EvaluationResult]]:
         """对比多个模型"""
         all_results = {}
         
         for model_name in model_names:
             all_results[model_name] = self.evaluate_model(
-                model_name, test_questions, num_samples
+                model_name,
+                test_questions,
+                num_samples=num_samples,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
             )
         
         return all_results
@@ -403,7 +434,11 @@ class EvaluationReporter:
         print("统计显著性检验（Mann-Whitney U test）")
         print("="*80 + "\n")
         
-        from scipy import stats
+        try:
+            from scipy import stats
+        except ImportError:
+            print("未安装 scipy，跳过统计显著性检验。\n")
+            return
         
         model_names = list(results.keys())
         if len(model_names) < 2:
@@ -573,8 +608,8 @@ class EvaluationReporter:
         print(f"\n详细结果已保存到: {output_path}")
 
 
-def load_test_questions():
-    """加载测试问题"""
+def default_test_questions() -> List[str]:
+    """默认测试问题"""
     return [
         "治疗阳痿吃什么药呢？",
         "精子生成减少的病因是什么？",
@@ -591,51 +626,140 @@ def load_test_questions():
     ]
 
 
+def load_test_questions(questions_file: str = "") -> List[str]:
+    """从文件或默认配置加载测试问题"""
+    if not questions_file:
+        return default_test_questions()
+
+    questions_path = Path(questions_file).expanduser().resolve()
+    if not questions_path.exists():
+        raise FileNotFoundError(f"测试问题文件不存在: {questions_path}")
+
+    if questions_path.suffix.lower() == ".txt":
+        questions = [
+            line.strip()
+            for line in questions_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    else:
+        raw_data = json.loads(questions_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_data, list):
+            raise ValueError("问题文件JSON必须是数组")
+        questions = []
+        for item in raw_data:
+            if isinstance(item, str) and item.strip():
+                questions.append(item.strip())
+            elif isinstance(item, dict) and item.get("question"):
+                questions.append(str(item["question"]).strip())
+
+    if not questions:
+        raise ValueError(f"测试问题为空: {questions_path}")
+    return questions
+
+
+def load_models_config(args) -> Dict[str, Dict[str, str]]:
+    """加载模型配置，支持JSON文件或命令行参数"""
+    if args.models_config:
+        config_path = Path(args.models_config).expanduser().resolve()
+        if not config_path.exists():
+            raise FileNotFoundError(f"模型配置文件不存在: {config_path}")
+        models_config = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(models_config, dict):
+            raise ValueError("模型配置JSON必须是对象，格式: {模型名: {model_path, lora_path}}")
+        return models_config
+
+    return {
+        "Qwen3-8B-FT": {
+            "model_path": args.qwen3_base_model,
+            "lora_path": args.qwen3_lora_path or None,
+        },
+        "Ziya-13B-med": {
+            "model_path": args.ziya_model_path,
+            "lora_path": None,
+        },
+    }
+
+
+def parse_args():
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent.parent
+    qwen3_finetune_root = script_dir.parent
+
+    parser = argparse.ArgumentParser(description="综合医疗模型评测")
+    parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--num-samples", type=int, default=3, help="每个问题采样次数")
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument(
+        "--output-dir",
+        default=str(script_dir / "evaluation_results"),
+        help="评测结果输出目录",
+    )
+    parser.add_argument(
+        "--questions-file",
+        default="",
+        help="测试问题文件路径(.txt 或 .json)",
+    )
+    parser.add_argument(
+        "--models-config",
+        default="",
+        help="模型配置JSON路径，传入后会覆盖命令行模型路径参数",
+    )
+    parser.add_argument(
+        "--qwen3-base-model",
+        default=str(project_root / "models" / "qwen3-8b-dir"),
+        help="Qwen3基础模型路径",
+    )
+    parser.add_argument(
+        "--qwen3-lora-path",
+        default=str(qwen3_finetune_root / "outputs-qwen3-sft-huatuo" / "checkpoint-final"),
+        help="Qwen3 LoRA路径，留空表示不加载LoRA",
+    )
+    parser.add_argument(
+        "--ziya-model-path",
+        default=str(project_root / "models" / "ziya-13b-med"),
+        help="Ziya模型路径",
+    )
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
+    args = parse_args()
+
     print("="*80)
     print("综合模型评测系统")
     print("="*80 + "\n")
     
-    # 配置
-    device = "auto"
-    num_samples = 3  # 每个问题生成3次，取平均
-    
     # 创建对比器
-    comparator = ModelComparator(device=device)
-    
-    # 加载模型（根据实际情况修改路径）
-    models_config = {
-        "Qwen3-8B-FT": {
-            "model_path": "../models/qwen3-8b-dir",
-            "lora_path": "./outputs-qwen3-sft-huatuo/checkpoint-final"
-        },
-        "Ziya-13B-med": {
-            "model_path": "../models/ziya-13b-med",
-            "lora_path": None
-        }
-    }
+    comparator = ModelComparator(device=args.device)
+    models_config = load_models_config(args)
     
     for model_name, config in models_config.items():
         comparator.load_model(model_name, **config)
     
     # 加载测试问题
-    test_questions = load_test_questions()
+    test_questions = load_test_questions(args.questions_file)
     print(f"\n测试问题数量: {len(test_questions)}\n")
     
     # 运行评测
     results = comparator.compare_models(
         model_names=list(models_config.keys()),
         test_questions=test_questions,
-        num_samples=num_samples
+        num_samples=args.num_samples,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_p=args.top_p,
     )
     
     # 生成报告
     reporter = EvaluationReporter()
     reporter.print_summary(results)
     reporter.statistical_test(results)
-    reporter.visualize_results(results, output_dir="./evaluation_results")
-    reporter.save_detailed_results(results, "./evaluation_results/detailed_results.json")
+    reporter.visualize_results(results, output_dir=args.output_dir)
+    output_json = str(Path(args.output_dir) / "detailed_results.json")
+    reporter.save_detailed_results(results, output_json)
     
     print("\n" + "="*80)
     print("评测完成！")

@@ -9,6 +9,9 @@ qwen3_finetune/
 ├── README.md                           # 本文件
 ├── GRPO_GUIDE.md                       # GRPO详细指南
 ├── RLHF_GUIDE.md                       # 强化学习指南
+├── configs/                            # 配置化Pipeline模板
+│   ├── pipeline_quick.json.example    # 快速流程配置模板
+│   └── pipeline_full.json.example     # 完整流程配置模板
 │
 ├── pretrain/                           # 预训练脚本
 │   ├── pretrain_qwen3.sh               # 预训练脚本（本地数据）
@@ -48,6 +51,7 @@ qwen3_finetune/
 ├── scripts/                            # Pipeline脚本
 │   ├── full_pipeline.sh               # 完整训练Pipeline
 │   └── quick_start.sh                # 快速开始脚本
+│   └── run_pipeline.py               # 配置驱动统一入口
 │
 └── outputs-*/                          # 训练输出目录
     ├── outputs-qwen3-pretrain/        # 预训练输出目录
@@ -61,7 +65,42 @@ qwen3_finetune/
 
 ## 训练流程
 
-### 方式1：完整训练Pipeline（推荐）
+### 方式0：配置驱动Pipeline（推荐）
+
+统一入口，支持按配置编排 PT/SFT/RLHF/Eval、分阶段执行、日志落盘：
+
+```bash
+cd /root/autodl-tmp/my-medical-gpt/qwen3_finetune
+
+# 复制模板为本地配置（项目默认忽略 *.json）
+cp configs/pipeline_quick.json.example configs/pipeline_quick.json
+cp configs/pipeline_full.json.example configs/pipeline_full.json
+
+# 快速流程
+python3 scripts/run_pipeline.py --config configs/pipeline_quick.json
+
+# 完整流程
+python3 scripts/run_pipeline.py --config configs/pipeline_full.json
+
+# 仅执行某些阶段
+python3 scripts/run_pipeline.py --config configs/pipeline_full.json --only-stages sft_huatuo,comprehensive_eval
+
+# 执行默认关闭的阶段（例如 rlhf_dpo）
+python3 scripts/run_pipeline.py --config configs/pipeline_full.json --only-stages rlhf_dpo
+
+# 从某阶段跑到某阶段
+python3 scripts/run_pipeline.py --config configs/pipeline_full.json --from-stage compare_eval --to-stage comprehensive_eval
+
+# 仅打印执行计划
+python3 scripts/run_pipeline.py --config configs/pipeline_full.json --dry-run
+```
+
+**特点：**
+1. 所有流程在 JSON 中配置，不需要改脚本源码
+2. 每个阶段自动产生日志（`qwen3_finetune/logs/pipeline/`）
+3. 支持通过 `--var KEY=VALUE` 覆盖配置变量
+
+### 方式1：完整训练Pipeline（兼容旧流程）
 
 使用大数据集进行完整的预训练+微调流程：
 
@@ -75,7 +114,7 @@ bash scripts/full_pipeline.sh
 2. **SFT微调** - 使用22万条华佗医疗对话数据进行指令微调
 3. **模型对比** - 对比训练后的Qwen3与Ziya-13B-med模型
 
-### 方式2：快速开始
+### 方式2：快速开始（兼容旧流程）
 
 使用本地小数据集进行快速测试：
 
@@ -84,7 +123,7 @@ cd /root/autodl-tmp/my-medical-gpt/qwen3_finetune
 bash scripts/quick_start.sh
 ```
 
-### 方式3：分步训练
+### 方式3：分步训练（手动）
 
 #### 阶段1：预训练（可选）
 

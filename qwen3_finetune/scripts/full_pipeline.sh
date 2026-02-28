@@ -105,11 +105,11 @@ echo "阶段3：模型对比"
 echo "对比Qwen3-8B微调模型 vs Ziya-13B-med"
 echo "=========================================="
 
-# 更新对比脚本中的模型路径
-sed -i "s|qwen3_lora_path = .*|qwen3_lora_path = \"$OUTPUT_DIR_SFT/checkpoint-final\"|" eval/compare_models.py
-
 # 运行对比
-python eval/compare_models.py
+python eval/compare_models.py \
+    --qwen3-base-model "$OUTPUT_DIR_PRETRAIN" \
+    --qwen3-lora-path "$OUTPUT_DIR_SFT/checkpoint-final" \
+    --output-dir ./eval/comparison_results
 
 echo ""
 echo "=========================================="
@@ -118,5 +118,5 @@ echo "=========================================="
 echo "模型输出:"
 echo "  - 预训练模型: $OUTPUT_DIR_PRETRAIN"
 echo "  - SFT微调模型: $OUTPUT_DIR_SFT"
-echo "  - 对比结果: ./comparison_results.json"
+echo "  - 对比结果目录: ./eval/comparison_results"
 echo ""

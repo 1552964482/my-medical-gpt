@@ -1,0 +1,74 @@
+{
+  "name": "qwen3-full-pipeline",
+  "workdir": "${qwen3_root}",
+  "logs_dir": "${qwen3_root}/logs/pipeline",
+  "fail_fast": true,
+  "vars": {
+    "qwen3_base_model": "${project_root}/models/qwen3-8b-dir",
+    "pretrain_output_dir": "${qwen3_root}/outputs-qwen3-pretrain-hf",
+    "sft_output_dir": "${qwen3_root}/outputs-qwen3-sft-huatuo",
+    "qwen3_lora_path": "${sft_output_dir}/checkpoint-final",
+    "dpo_output_dir": "${qwen3_root}/outputs-qwen3-dpo",
+    "grpo_output_dir": "${qwen3_root}/outputs-qwen3-grpo",
+    "ziya_model_path": "${project_root}/models/ziya-13b-med",
+    "compare_output_dir": "${qwen3_root}/eval/comparison_results",
+    "comprehensive_output_dir": "${qwen3_root}/eval/evaluation_results",
+    "questions_file": "${qwen3_root}/eval/test_questions.txt"
+  },
+  "stages": [
+    {
+      "name": "pretrain_hf",
+      "env": {
+        "MODEL_PATH": "${qwen3_base_model}",
+        "OUTPUT_DIR": "${pretrain_output_dir}"
+      },
+      "commands": [
+        "bash pretrain/pretrain_qwen3_hf.sh"
+      ]
+    },
+    {
+      "name": "sft_huatuo",
+      "env": {
+        "MODEL_PATH": "${qwen3_base_model}",
+        "OUTPUT_DIR": "${sft_output_dir}"
+      },
+      "commands": [
+        "bash sft/sft_qwen3_huatuo.sh"
+      ]
+    },
+    {
+      "name": "rlhf_dpo",
+      "enabled": false,
+      "env": {
+        "MODEL_PATH": "${sft_output_dir}",
+        "OUTPUT_DIR": "${dpo_output_dir}"
+      },
+      "commands": [
+        "bash rlhf/train_dpo.sh"
+      ]
+    },
+    {
+      "name": "rlhf_grpo_single",
+      "enabled": false,
+      "env": {
+        "MODEL_PATH": "${sft_output_dir}",
+        "OUTPUT_DIR": "${grpo_output_dir}"
+      },
+      "commands": [
+        "bash rlhf/train_grpo_single_gpu.sh"
+      ]
+    },
+    {
+      "name": "compare_eval",
+      "commands": [
+        "python3 eval/compare_models.py --qwen3-base-model ${qwen3_base_model} --qwen3-lora-path ${qwen3_lora_path} --ziya-model-path ${ziya_model_path} --output-dir ${compare_output_dir}"
+      ]
+    },
+    {
+      "name": "comprehensive_eval",
+      "commands": [
+        "python3 eval/comprehensive_evaluation.py --qwen3-base-model ${qwen3_base_model} --qwen3-lora-path ${qwen3_lora_path} --ziya-model-path ${ziya_model_path} --questions-file ${questions_file} --output-dir ${comprehensive_output_dir}"
+      ]
+    }
+  ]
+}

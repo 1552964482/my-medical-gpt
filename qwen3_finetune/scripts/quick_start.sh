@@ -21,10 +21,11 @@ bash sft/finetune_qwen3_single_gpu.sh
 
 echo ""
 echo "阶段3：模型对比"
-# 修改对比脚本中的checkpoint路径
-sed -i "s|qwen3_lora_path = .*|qwen3_lora_path = \"./outputs-qwen3-medical/checkpoint-final\"|" eval/compare_models.py
-python eval/compare_models.py
+python eval/compare_models.py \
+    --qwen3-base-model ../models/qwen3-8b-dir \
+    --qwen3-lora-path ./outputs-qwen3-medical/checkpoint-final \
+    --output-dir ./eval/comparison_results
 
 echo ""
 echo "快速训练完成！"
-echo "对比结果: ./comparison_results.json"
+echo "对比结果目录: ./eval/comparison_results"

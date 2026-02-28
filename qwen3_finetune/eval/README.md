@@ -19,7 +19,11 @@
 cd /root/autodl-tmp/my-medical-gpt/qwen3_finetune
 
 # 运行综合评测
-python eval/comprehensive_evaluation.py
+python eval/comprehensive_evaluation.py \
+  --qwen3-base-model ../models/qwen3-8b-dir \
+  --qwen3-lora-path ./outputs-qwen3-sft-huatuo/checkpoint-final \
+  --ziya-model-path ../models/ziya-13b-med \
+  --output-dir ./eval/evaluation_results
 ```
 
 **输出：**
@@ -32,7 +36,10 @@ python eval/comprehensive_evaluation.py
 
 ```bash
 # GPU版本
-python eval/compare_models.py
+python eval/compare_models.py \
+  --qwen3-base-model ../models/qwen3-8b-dir \
+  --qwen3-lora-path ./outputs-qwen3-sft-huatuo/checkpoint-final \
+  --output-dir ./eval/comparison_results
 
 # CPU版本
 python eval/compare_models_cpu.py
@@ -96,19 +103,32 @@ evaluation_results/
 
 ### 模型路径配置
 
-在 `comprehensive_evaluation.py` 的 `main()` 函数中配置：
+通过命令行参数传入（推荐）：
 
-```python
-models_config = {
-    "Qwen3-8B-FT": {
-        "model_path": "../models/qwen3-8b-dir",
-        "lora_path": "./outputs-qwen3-sft-huatuo/checkpoint-final"
-    },
-    "Ziya-13B-med": {
-        "model_path": "../models/ziya-13b-med",
-        "lora_path": None
-    }
+```bash
+python eval/comprehensive_evaluation.py \
+  --qwen3-base-model ../models/qwen3-8b-dir \
+  --qwen3-lora-path ./outputs-qwen3-sft-huatuo/checkpoint-final \
+  --ziya-model-path ../models/ziya-13b-med
+```
+
+或使用 JSON 配置文件：
+
+```json
+{
+  "Qwen3-8B-FT": {
+    "model_path": "../models/qwen3-8b-dir",
+    "lora_path": "./outputs-qwen3-sft-huatuo/checkpoint-final"
+  },
+  "Ziya-13B-med": {
+    "model_path": "../models/ziya-13b-med",
+    "lora_path": null
+  }
 }
+```
+
+```bash
+python eval/comprehensive_evaluation.py --models-config ./eval/models_config.json
 ```
 
 ### 评测参数
@@ -119,20 +139,22 @@ models_config = {
 | `num_samples` | 每个问题生成次数 | 3 |
 | `max_new_tokens` | 最大生成长度 | 512 |
 | `temperature` | 生成温度 | 0.7 |
+| `top_p` | 采样Top-p | 0.9 |
+| `questions_file` | 自定义问题文件(.txt/.json) | 空（使用内置问题） |
 
 ## 自定义评测
 
 ### 修改测试问题
 
-编辑 `comprehensive_evaluation.py` 中的 `load_test_questions()` 函数：
+推荐使用问题文件（`.txt` 或 `.json`）：
 
-```python
-def load_test_questions():
-    return [
-        "你的问题1",
-        "你的问题2",
-        # ... 添加更多问题
-    ]
+```text
+糖尿病的常见并发症有哪些？
+高血压患者日常生活中需要注意什么？
+```
+
+```bash
+python eval/comprehensive_evaluation.py --questions-file ./eval/test_questions.txt
 ```
 
 ### 调整评分权重
